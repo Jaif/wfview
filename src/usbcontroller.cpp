@@ -385,20 +385,59 @@ void usbController::runTimer()
                 if (data[9]) {
                     // This is a keypress (AJAZZ AKP-03 clone with corrected button index)
                     qInfo(logUsbControl()) << QString("Key:%0 (%1) State:%2").arg(quint8(data[9]),8,2,QChar('0')).arg(quint8(data[9])).arg(quint8(data[10]));
+                    
+                    // Determine the button bit position
+                    quint32 buttonBit = 0;
+                    bool buttonFound = true;
                     if ((quint8)data[9] < 0x07) {
-                        tempButtons |= (data[10] & 0x01) << (data[9] - 1);
+                        buttonBit = (data[9] - 1);
                     } else if ((quint8)data[9] == 0x25) {
-                        tempButtons |= (data[10] & 0x01) << 7;
+                        buttonBit = 7;
                     } else if ((quint8)data[9] == 0x30) {
-                        tempButtons |= (data[10] & 0x01) << 8;
+                        buttonBit = 8;
                     } else if ((quint8)data[9] == 0x31) {
-                        tempButtons |= (data[10] & 0x01) << 9;
+                        buttonBit = 9;
                     } else if ((quint8)data[9] == 0x35) {
-                        tempButtons |= (data[10] & 0x01) << 10;
+                        buttonBit = 10;
                     } else if ((quint8)data[9] == 0x33) {
-                        tempButtons |= (data[10] & 0x01) << 11;
+                        buttonBit = 11;
                     } else if ((quint8)data[9] == 0x34) {
-                        tempButtons |= (data[10] & 0x01) << 12;
+                        buttonBit = 12;
+                    } else {
+                        buttonFound = false;
+                    }
+
+                    // If this is a button press/release event (not a knob event)
+                    if (buttonFound) {
+                        // For AKP03, we receive release events (state=0). 
+                        // Directly emit the button press action when we get the release.
+                        if ((data[10] & 0x01) == 0) {
+                            // This is a release event - emit the button press action immediately
+                            auto but = std::find_if(buttonList->begin(), buttonList->end(), [dev, buttonBit](const BUTTON& b)
+                            { return (b.path == dev->path && b.page == dev->currentPage && b.num == buttonBit); });
+                            
+                            if (but != buttonList->end()) {
+                                qDebug(logUsbControl()) << QString("On Button event for button %0: %1").arg(but->num).arg(but->onCommand->text);
+                                if (but->onCommand->command == funcPageUp)
+                                    emit changePage(dev, dev->currentPage+1);
+                                else if (but->onCommand->command == funcPageDown)
+                                    emit changePage(dev, dev->currentPage-1);
+                                else if (but->onCommand->command == funcLCDSpectrum)
+                                    dev->lcd = funcLCDSpectrum;
+                                else if (but->onCommand->command == funcLCDWaterfall)
+                                    dev->lcd = funcLCDWaterfall;
+                                else if (but->onCommand->command == funcLCDNothing) {
+                                    dev->lcd = funcLCDNothing;
+                                    QTimer::singleShot(0, this, [=]() { sendRequest(dev,usbFeatureType::featureColor,but->num,"",Q_NULLPTR, &dev->color); });
+                                } else {
+                                    emit button(but->onCommand);
+                                }
+                            }
+                            // Don't update tempButtons - this prevents duplicate button release processing
+                        } else {
+                            // Normal press state tracking for other devices
+                            tempButtons |= (data[10] & 0x01) << buttonBit;
+                        }
                     }
 
                     if (((quint8)data[9] >> 4 & 0x0f) == 0x05) {
@@ -1163,6 +1202,7 @@ void usbController::sendRequest(USBDEVICE *dev, usbFeatureType feature, int val,
     case MiraBox293:
     case MiraBox293S:
     case MiraBoxN3:
+    case AjazzAKP03:
         data.resize(dev->type.maxPayload+1); // Make sure buffer is 512 bytes
         data.fill(0,dev->type.maxPayload+1); // Replace with zeros.
         data.replace(1,3,QByteArrayLiteral("\x43\x52\x54")); //Command prefix
@@ -1190,7 +1230,10 @@ void usbController::sendRequest(USBDEVICE *dev, usbFeatureType feature, int val,
         case usbFeatureType::featureButton:
         {
 
-            if ((dev->type.model == usbDeviceType::MiraBoxN3 && val < 7) || (dev->type.model == usbDeviceType::MiraBox293) || (dev->type.model == usbDeviceType::MiraBox293S))
+            if ((dev->type.model == usbDeviceType::MiraBoxN3 && val < 7) ||
+                (dev->type.model == usbDeviceType::MiraBox293) ||
+                (dev->type.model == usbDeviceType::MiraBox293S) ||
+                (dev->type.model == usbDeviceType::AjazzAKP03))
             {
                 data.replace(6,3,QByteArrayLiteral("\x42\x41\x54"));
 
@@ -1611,7 +1654,7 @@ void usbController::loadButtons()
     defaultButtons.append(BUTTON(MiraBoxN3, 11, QRect(555, 417, 75, 25), Qt::white, &commands[0], &commands[0]));
     defaultButtons.append(BUTTON(MiraBoxN3, 12, QRect(737, 417, 75, 25), Qt::white, &commands[0], &commands[0]));
 
-    // AJAZZ AKP-03 (numbered 0-11 instead of 1-12)
+    // AJAZZ AKP-03
     defaultButtons.append(BUTTON(AjazzAKP03, 0, QRect(121, 103, 88, 88), Qt::white, &commands[0], &commands[0],true));
     defaultButtons.append(BUTTON(AjazzAKP03, 1, QRect(248, 103, 88, 88), Qt::white, &commands[0], &commands[0],true));
     defaultButtons.append(BUTTON(AjazzAKP03, 2, QRect(376, 103, 88, 88), Qt::white, &commands[0], &commands[0],true));
@@ -1624,8 +1667,6 @@ void usbController::loadButtons()
     defaultButtons.append(BUTTON(AjazzAKP03, 9, QRect(633, 154, 100, 25), Qt::white, &commands[0], &commands[0]));
     defaultButtons.append(BUTTON(AjazzAKP03, 10, QRect(555, 417, 75, 25), Qt::white, &commands[0], &commands[0]));
     defaultButtons.append(BUTTON(AjazzAKP03, 11, QRect(737, 417, 75, 25), Qt::white, &commands[0], &commands[0]));
-
-
 }
 
 void usbController::loadKnobs()
@@ -1652,6 +1693,11 @@ void usbController::loadKnobs()
     defaultKnobs.append(KNOB(MiraBoxN3, 0, QRect(633, 233, 100, 25), Qt::green, &commands[3]));
     defaultKnobs.append(KNOB(MiraBoxN3, 1, QRect(555, 448, 75, 25), Qt::green, &commands[0]));
     defaultKnobs.append(KNOB(MiraBoxN3, 2, QRect(737, 448, 75, 25), Qt::green, &commands[0]));
+
+    // Ajazz AKP03
+    defaultKnobs.append(KNOB(AjazzAKP03, 0, QRect(633, 233, 100, 25), Qt::green, &commands[3]));
+    defaultKnobs.append(KNOB(AjazzAKP03, 1, QRect(555, 448, 75, 25), Qt::green, &commands[0]));
+    defaultKnobs.append(KNOB(AjazzAKP03, 2, QRect(737, 448, 75, 25), Qt::green, &commands[0]));
 }
 
 void usbController::loadCommands()
@@ -2424,7 +2470,7 @@ bool usbController::initDevice(USBDEVICE *dev)
             QTimer::singleShot(0, this, [=]() { sendRequest(dev,usbFeatureType::featureLEDControl,2,"0"); });
             QTimer::singleShot(500, this, [=]() { sendRequest(dev,usbFeatureType::featureLEDControl,1,"0"); });
         }
-        else if (dev->type.model == MiraBoxN3 || dev->type.model == MiraBox293 || dev->type.model == MiraBox293S)
+        else if (dev->type.model == MiraBoxN3 || dev->type.model == MiraBox293 || dev->type.model == MiraBox293S || dev->type.model == AjazzAKP03)
         {
             QTimer::singleShot(0, this, [=]() { sendRequest(dev,usbFeatureType::featureWakeScreen); });
             QTimer::singleShot(0, this, [=]() { sendRequest(dev,usbFeatureType::featureBrightness,0x03,""); });

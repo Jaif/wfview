@@ -43,6 +43,7 @@ usbController::usbController()
     knownDevices.append(USBTYPE(MiraBox293, 0x5500, 0x1001, 0x0000, 0x0000,15,0,0,0,512,100));
     knownDevices.append(USBTYPE(MiraBox293S, 0x5548, 0x6670, 0x0001, 0xffa0,15,0,0,0,512,85)); // Boot logo 854 x 480.
     knownDevices.append(USBTYPE(MiraBoxN3, 0x6603, 0x1003, 0x0001, 0xffa0,12,0,3,0,1024,72));
+    knownDevices.append(USBTYPE(AjazzAKP03, 0x0300, 0x1002, 0x0000, 0x0000,12,0,3,0,1024,72)); // Similar to MiraBoxN3
 }
 
 usbController::~usbController()
@@ -110,18 +111,16 @@ void usbController::init(QMutex* mut,usbDevMap* devs ,QVector<BUTTON>* buts,QVec
 #endif
         
         qDebug(logUsbControl()) << "Found available HID devices (not all will be suitable for use):";
-        struct hid_device_info *devs = hid_enumerate(0x0, 0x0);
-        struct hid_device_info *dev = devs;
-        while (dev) {
-            qInfo(logUsbControl()) << QString("Device found: (%0:%1) %2 manufacturer: (%3)%4 usage: 0x%5 usage_page 0x%6")
-                                      .arg(dev->vendor_id, 4, 16, QChar('0'))
-                                      .arg(dev->product_id, 4, 16, QChar('0'))
-                                      .arg(hidString(dev->product_string))
-                                      .arg(hidString(dev->manufacturer_string))
-                                      .arg(QString())
-                                      .arg(dev->usage, 4, 16, QChar('0'))
-                                      .arg(dev->usage_page, 4, 16, QChar('0'));
-            dev = dev->next;
+        struct hid_device_info* devs;
+        devs = hid_enumerate(0x0, 0x0);
+        while (devs) {
+            qDebug(logUsbControl()) << QString("Device found: (%0:%1) %2 manufacturer: (%3)%4 usage: 0x%5 usage_page 0x%6")
+                                      .arg(devs->vendor_id, 4, 16, QChar('0'))
+                                      .arg(devs->product_id, 4, 16, QChar('0'))
+                                      .arg(QString::fromWCharArray(devs->product_string),QString::fromWCharArray(devs->product_string),QString::fromWCharArray(devs->manufacturer_string))
+                                      .arg(devs->usage, 4, 16, QChar('0'))
+                                      .arg(devs->usage_page, 4, 16, QChar('0'));
+            devs = devs->next;
         }
         hid_free_enumeration(devs);
         
@@ -343,6 +342,51 @@ void usbController::runTimer()
                     qInfo(logUsbControl()) << QString("Key:%0 (%1) State:%2").arg(quint8(data[9]),8,2,QChar('0')).arg(quint8(data[9])).arg(quint8(data[10]));
                     if ((quint8)data[9] < 0x07) {
                         tempButtons |= (data[10] & 0x01) << (data[9]);
+                    } else if ((quint8)data[9] == 0x25) {
+                        tempButtons |= (data[10] & 0x01) << 7;
+                    } else if ((quint8)data[9] == 0x30) {
+                        tempButtons |= (data[10] & 0x01) << 8;
+                    } else if ((quint8)data[9] == 0x31) {
+                        tempButtons |= (data[10] & 0x01) << 9;
+                    } else if ((quint8)data[9] == 0x35) {
+                        tempButtons |= (data[10] & 0x01) << 10;
+                    } else if ((quint8)data[9] == 0x33) {
+                        tempButtons |= (data[10] & 0x01) << 11;
+                    } else if ((quint8)data[9] == 0x34) {
+                        tempButtons |= (data[10] & 0x01) << 12;
+                    }
+
+                    if (((quint8)data[9] >> 4 & 0x0f) == 0x05) {
+                        if ((qint8)data[9] & 0x01) {
+                            dev->knobValues[0].value++;
+                        } else {
+                            dev->knobValues[0].value--;
+                        }
+                    }
+
+                    if (((quint8)data[9] >> 4 & 0x0f) == 0x09) {
+                        if ((qint8)data[9] & 0x01) {
+                            dev->knobValues[1].value++;
+                        } else {
+                            dev->knobValues[1].value--;
+                        }
+                    }
+
+                    if (((quint8)data[9] >> 4 & 0x0f) == 0x06) {
+                        if ((qint8)data[9] & 0x01) {
+                            dev->knobValues[2].value++;
+                        } else {
+                            dev->knobValues[2].value--;
+                        }
+                    }
+                }
+                break;
+            case AjazzAKP03:
+                if (data[9]) {
+                    // This is a keypress (AJAZZ AKP-03 clone with corrected button index)
+                    qInfo(logUsbControl()) << QString("Key:%0 (%1) State:%2").arg(quint8(data[9]),8,2,QChar('0')).arg(quint8(data[9])).arg(quint8(data[10]));
+                    if ((quint8)data[9] < 0x07) {
+                        tempButtons |= (data[10] & 0x01) << (data[9] - 1);
                     } else if ((quint8)data[9] == 0x25) {
                         tempButtons |= (data[10] & 0x01) << 7;
                     } else if ((quint8)data[9] == 0x30) {
@@ -1566,6 +1610,20 @@ void usbController::loadButtons()
     defaultButtons.append(BUTTON(MiraBoxN3, 10, QRect(633, 154, 100, 25), Qt::white, &commands[0], &commands[0]));
     defaultButtons.append(BUTTON(MiraBoxN3, 11, QRect(555, 417, 75, 25), Qt::white, &commands[0], &commands[0]));
     defaultButtons.append(BUTTON(MiraBoxN3, 12, QRect(737, 417, 75, 25), Qt::white, &commands[0], &commands[0]));
+
+    // AJAZZ AKP-03 (numbered 0-11 instead of 1-12)
+    defaultButtons.append(BUTTON(AjazzAKP03, 0, QRect(121, 103, 88, 88), Qt::white, &commands[0], &commands[0],true));
+    defaultButtons.append(BUTTON(AjazzAKP03, 1, QRect(248, 103, 88, 88), Qt::white, &commands[0], &commands[0],true));
+    defaultButtons.append(BUTTON(AjazzAKP03, 2, QRect(376, 103, 88, 88), Qt::white, &commands[0], &commands[0],true));
+    defaultButtons.append(BUTTON(AjazzAKP03, 3, QRect(121, 231, 88, 88), Qt::white, &commands[0], &commands[0],true));
+    defaultButtons.append(BUTTON(AjazzAKP03, 4, QRect(248, 231, 88, 88), Qt::white, &commands[0], &commands[0],true));
+    defaultButtons.append(BUTTON(AjazzAKP03, 5, QRect(376, 231, 88, 88), Qt::white, &commands[0], &commands[0],true));
+    defaultButtons.append(BUTTON(AjazzAKP03, 6, QRect(118, 430, 90, 30), Qt::white, &commands[0], &commands[0]));
+    defaultButtons.append(BUTTON(AjazzAKP03, 7, QRect(244, 430, 90, 30), Qt::white, &commands[0], &commands[0]));
+    defaultButtons.append(BUTTON(AjazzAKP03, 8, QRect(373, 430, 90, 30), Qt::white, &commands[0], &commands[0]));
+    defaultButtons.append(BUTTON(AjazzAKP03, 9, QRect(633, 154, 100, 25), Qt::white, &commands[0], &commands[0]));
+    defaultButtons.append(BUTTON(AjazzAKP03, 10, QRect(555, 417, 75, 25), Qt::white, &commands[0], &commands[0]));
+    defaultButtons.append(BUTTON(AjazzAKP03, 11, QRect(737, 417, 75, 25), Qt::white, &commands[0], &commands[0]));
 
 
 }

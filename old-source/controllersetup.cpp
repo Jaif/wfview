@@ -654,6 +654,9 @@ void controllerSetup::newDevice(USBDEVICE* dev)
     case MiraBoxN3:
         c->image->load(":/resources/miraboxn3.png");
         break;
+    case AjazzAKP03:
+        c->image->load(":/resources/ajazzakp03.png");
+        break;
     default:
         this->adjustSize();
         break;

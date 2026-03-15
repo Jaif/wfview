@@ -1268,6 +1268,8 @@ void usbController::sendRequest(USBDEVICE *dev, usbFeatureType feature, int val,
 
                 if (dev->type.model == usbDeviceType::MiraBox293 || dev->type.model == usbDeviceType::MiraBox293S)
                     myTransform.rotate(270);
+                else if (dev->type.model == usbDeviceType::AjazzAKP03)
+                    myTransform.rotate(0);                
                 else
                     myTransform.rotate(90);
 

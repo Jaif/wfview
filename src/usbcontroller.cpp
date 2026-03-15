@@ -434,7 +434,6 @@ void usbController::runTimer()
                                     emit button(but->onCommand);
                                 }
                             }
-                            else
                             // Don't update tempButtons - this prevents duplicate button release processing
                         } else {
                             // Normal press state tracking for other devices
@@ -796,6 +795,7 @@ void usbController::sendRequest(USBDEVICE *dev, usbFeatureType feature, int val,
             dev->brightness = val;
             break;
         case usbFeatureType::featureOrientation:
+            qDebug(logUsbControl()) << QString("Setting orientation to %0").arg(val);
             data[1] = (qint8)0xb1;
             data[2] = (qint8)val+1;
             dev->orientation = val;

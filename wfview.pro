@@ -42,10 +42,12 @@ CONFIG(debug, release|debug) {
     linux:QMAKE_CXXFLAGS += -fvisibility=hidden
     linux:QMAKE_CXXFLAGS += -fvisibility-inlines-hidden
     linux:QMAKE_CXXFLAGS += -faligned-new
-    linux:QMAKE_LFLAGS += -O2 -s
+    linux:QMAKE_LFLAGS += -O2
     win32:DESTDIR = wfview-release
     DEFINES += NDEBUG
 }
+
+QMAKE_CXXFLAGS += -g
 
 TRANSLATIONS += translations/wfview_en.ts \
                 translations/wfview_en_GB.ts \

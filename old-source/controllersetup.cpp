@@ -244,6 +244,7 @@ void controllerSetup::showMenu(controllerScene* scene, QPoint p)
         case MiraBoxN3:
         case MiraBox293:
         case MiraBox293S:
+        case AjazzAKP03:
             buttonOnColor->setStyleSheet(QString("background-color: %1").arg(currentButton->backgroundOn.name(QColor::HexArgb)));
             buttonOffColor->setStyleSheet(QString("background-color: %1").arg(currentButton->backgroundOff.name(QColor::HexArgb)));
             buttonOnColor->show();

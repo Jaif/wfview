@@ -384,7 +384,7 @@ void usbController::runTimer()
             case AjazzAKP03:
                 if (data[9]) {
                     // This is a keypress (AJAZZ AKP-03 clone with corrected button index)
-                    qInfo(logUsbControl()) << QString("Key:%0 (%1) State:%2").arg(quint8(data[9]),8,2,QChar('0')).arg(quint8(data[9])).arg(quint8(data[10]));
+                    qInfo(logUsbControl()) << QString("AKP03 -> Key:%0 (%1) State:%2").arg(quint8(data[9]),8,2,QChar('0')).arg(quint8(data[9])).arg(quint8(data[10]));
                     
                     // Determine the button bit position
                     quint32 buttonBit = 0;
@@ -409,14 +409,18 @@ void usbController::runTimer()
 
                     // If this is a button press/release event (not a knob event)
                     if (buttonFound) {
-                        // For AKP03, we receive release events (state=0). 
+                        qInfo(logUsbControl()) << QString("AKP03 -> Button bit position: %0").arg(buttonBit);
+                        buttonBit = buttonBit + 1;
+                        qInfo(logUsbControl()) << QString("AKP03 -> Updated button bit position: %0").arg(buttonBit);
+                        // For AKP03, we receive release events (state=0).
                         // Directly emit the button press action when we get the release.
                         if ((data[10] & 0x01) == 0) {
                             // This is a release event - emit the button press action immediately
                             auto but = std::find_if(buttonList->begin(), buttonList->end(), [dev, buttonBit](const BUTTON& b)
-                            { return (b.path == dev->path && b.page == dev->currentPage && b.num == buttonBit); });
-                            
+                            { return (b.path == dev->path && b.page == dev->currentPage && (quint32)b.num == buttonBit); });
+
                             if (but != buttonList->end()) {
+                                qInfo(logUsbControl()) << QString("AKP03 -> Found button: %0").arg(but->num);
                                 qDebug(logUsbControl()) << QString("On Button event for button %0: %1").arg(but->num).arg(but->onCommand->text);
                                 if (but->onCommand->command == funcPageUp)
                                     emit changePage(dev, dev->currentPage+1);
@@ -430,12 +434,18 @@ void usbController::runTimer()
                                     dev->lcd = funcLCDNothing;
                                     QTimer::singleShot(0, this, [=]() { sendRequest(dev,usbFeatureType::featureColor,but->num,"",Q_NULLPTR, &dev->color); });
                                 } else {
+                                    qInfo(logUsbControl()) << QString("AKP03 -> Emitting button event for button %0").arg(but->num);
                                     emit button(but->onCommand);
                                 }
+                            }
+                            else
+                            {
+                                qInfo(logUsbControl()) << QString("AKP03 -> Button not found");
                             }
                             // Don't update tempButtons - this prevents duplicate button release processing
                         } else {
                             // Normal press state tracking for other devices
+                            qInfo(logUsbControl()) << QString("AKP03 -> Button press state: %0").arg((data[10] & 0x01) ? "Pressed" : "Released");
                             tempButtons |= (data[10] & 0x01) << buttonBit;
                         }
                     }
@@ -1655,18 +1665,18 @@ void usbController::loadButtons()
     defaultButtons.append(BUTTON(MiraBoxN3, 12, QRect(737, 417, 75, 25), Qt::white, &commands[0], &commands[0]));
 
     // AJAZZ AKP-03
-    defaultButtons.append(BUTTON(AjazzAKP03, 0, QRect(121, 103, 88, 88), Qt::white, &commands[0], &commands[0],true));
-    defaultButtons.append(BUTTON(AjazzAKP03, 1, QRect(248, 103, 88, 88), Qt::white, &commands[0], &commands[0],true));
-    defaultButtons.append(BUTTON(AjazzAKP03, 2, QRect(376, 103, 88, 88), Qt::white, &commands[0], &commands[0],true));
-    defaultButtons.append(BUTTON(AjazzAKP03, 3, QRect(121, 231, 88, 88), Qt::white, &commands[0], &commands[0],true));
-    defaultButtons.append(BUTTON(AjazzAKP03, 4, QRect(248, 231, 88, 88), Qt::white, &commands[0], &commands[0],true));
-    defaultButtons.append(BUTTON(AjazzAKP03, 5, QRect(376, 231, 88, 88), Qt::white, &commands[0], &commands[0],true));
-    defaultButtons.append(BUTTON(AjazzAKP03, 6, QRect(118, 430, 90, 30), Qt::white, &commands[0], &commands[0]));
-    defaultButtons.append(BUTTON(AjazzAKP03, 7, QRect(244, 430, 90, 30), Qt::white, &commands[0], &commands[0]));
-    defaultButtons.append(BUTTON(AjazzAKP03, 8, QRect(373, 430, 90, 30), Qt::white, &commands[0], &commands[0]));
-    defaultButtons.append(BUTTON(AjazzAKP03, 9, QRect(633, 154, 100, 25), Qt::white, &commands[0], &commands[0]));
-    defaultButtons.append(BUTTON(AjazzAKP03, 10, QRect(555, 417, 75, 25), Qt::white, &commands[0], &commands[0]));
-    defaultButtons.append(BUTTON(AjazzAKP03, 11, QRect(737, 417, 75, 25), Qt::white, &commands[0], &commands[0]));
+    defaultButtons.append(BUTTON(AjazzAKP03, 1, QRect(121, 103, 88, 88), Qt::white, &commands[0], &commands[0],true));
+    defaultButtons.append(BUTTON(AjazzAKP03, 2, QRect(248, 103, 88, 88), Qt::white, &commands[0], &commands[0],true));
+    defaultButtons.append(BUTTON(AjazzAKP03, 3, QRect(376, 103, 88, 88), Qt::white, &commands[0], &commands[0],true));
+    defaultButtons.append(BUTTON(AjazzAKP03, 4, QRect(121, 231, 88, 88), Qt::white, &commands[0], &commands[0],true));
+    defaultButtons.append(BUTTON(AjazzAKP03, 5, QRect(248, 231, 88, 88), Qt::white, &commands[0], &commands[0],true));
+    defaultButtons.append(BUTTON(AjazzAKP03, 6, QRect(376, 231, 88, 88), Qt::white, &commands[0], &commands[0],true));
+    defaultButtons.append(BUTTON(AjazzAKP03, 7, QRect(118, 430, 90, 30), Qt::white, &commands[0], &commands[0]));
+    defaultButtons.append(BUTTON(AjazzAKP03, 8, QRect(244, 430, 90, 30), Qt::white, &commands[0], &commands[0]));
+    defaultButtons.append(BUTTON(AjazzAKP03, 9, QRect(373, 430, 90, 30), Qt::white, &commands[0], &commands[0]));
+    defaultButtons.append(BUTTON(AjazzAKP03, 10, QRect(633, 154, 100, 25), Qt::white, &commands[0], &commands[0]));
+    defaultButtons.append(BUTTON(AjazzAKP03, 11, QRect(555, 417, 75, 25), Qt::white, &commands[0], &commands[0]));
+    defaultButtons.append(BUTTON(AjazzAKP03, 12, QRect(737, 417, 75, 25), Qt::white, &commands[0], &commands[0]));
 }
 
 void usbController::loadKnobs()

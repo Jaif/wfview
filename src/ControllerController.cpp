@@ -467,6 +467,8 @@ QString ControllerController::getControllerImagePath(const QString &devicePath)
         return "qrc:/resources/mirabox293s.png";
     case MiraBoxN3:
         return "qrc:/resources/miraboxn3.png";
+    case AjazzAKP03:
+        return "qrc:/resources/ajazzakp03.png";
     default:
         return QString();
     }

@@ -244,6 +244,7 @@ void controllerSetup::showMenu(controllerScene* scene, QPoint p)
         case MiraBoxN3:
         case MiraBox293:
         case MiraBox293S:
+        case AjazzAKP03:
             buttonOnColor->setStyleSheet(QString("background-color: %1").arg(currentButton->backgroundOn.name(QColor::HexArgb)));
             buttonOffColor->setStyleSheet(QString("background-color: %1").arg(currentButton->backgroundOff.name(QColor::HexArgb)));
             buttonOnColor->show();
@@ -653,6 +654,9 @@ void controllerSetup::newDevice(USBDEVICE* dev)
         break;
     case MiraBoxN3:
         c->image->load(":/resources/miraboxn3.png");
+        break;
+    case AjazzAKP03:
+        c->image->load(":/resources/ajazzakp03.png");
         break;
     default:
         this->adjustSize();

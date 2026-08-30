@@ -1257,7 +1257,10 @@ void usbController::sendRequest(USBDEVICE *dev, usbFeatureType feature, int val,
                     else
                         butPaint.setFont(QFont("serif",16));
 
-                    butPaint.drawText(butImage.rect(),Qt::AlignCenter | Qt::AlignVCenter | Qt::TextWordWrap,  text);
+                    // AjazzAKP03's physical OLED is offset within the addressable image area, shift text left to compensate.
+                    QRect textRect = (dev->type.model == usbDeviceType::AjazzAKP03) ?
+                        butImage.rect().adjusted(-6, 0, -6, 0) : butImage.rect();
+                    butPaint.drawText(textRect,Qt::AlignCenter | Qt::AlignVCenter | Qt::TextWordWrap,  text);
                 } else {
                     butPaint.setCompositionMode(QPainter::CompositionMode_SourceAtop);
                     butPaint.drawImage(0, 0, *img);

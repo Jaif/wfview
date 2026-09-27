@@ -695,6 +695,9 @@ jobs:
           APP="wfview/wfview.app"
           ENTITLEMENTS="wfview/resources/wfview.entitlements"
 
+          # Catch a malformed entitlements plist before signing with it
+          plutil -lint "$ENTITLEMENTS"
+
           # 1. Sign standalone dylibs in Frameworks
           find "$APP/Contents/Frameworks" -maxdepth 1 -name "*.dylib" -exec \
             codesign --force --sign "$IDENTITY" --options runtime --timestamp {} \;
@@ -724,6 +727,18 @@ jobs:
 
           # Verify
           codesign --verify --deep --strict --verbose=2 "$APP"
+
+          # Verify the entitlements actually embedded in the signed bundle.
+          # USB controllers (HID) need com.apple.security.device.usb under the sandbox.
+          echo "=== Embedded entitlements ==="
+          codesign -d --entitlements - --xml "$APP" > signed.entitlements
+          plutil -p signed.entitlements
+          for key in com.apple.security.device.usb com.apple.security.device.serial; do
+            if [ "$(/usr/libexec/PlistBuddy -c "Print :$key" signed.entitlements 2>/dev/null)" != "true" ]; then
+              echo "::error::Signed app is missing entitlement $key"
+              exit 1
+            fi
+          done
 
       - name: Notarize application
         env:

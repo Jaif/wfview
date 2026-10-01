@@ -201,7 +201,6 @@ jobs:
           jom -j %NUMBER_OF_PROCESSORS%
 
       - name: Deploy Qt dependencies
-        if: steps.version_info.outputs.has_tag == 'true'
         shell: cmd
         run: |
           windeployqt ^
@@ -248,6 +247,13 @@ jobs:
         with:
           name: wfview-windows-x86
           path: wfview-windows-x86-setup.exe
+
+      - name: Upload portable build
+        if: steps.version_info.outputs.has_tag != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: wfview-windows-x86-portable
+          path: wfview/wfview-release/
 
   # ═══════════════════════════════════════════════════════════════════
   #  Windows 64bit Qt6 Build
@@ -426,7 +432,6 @@ jobs:
           jom -j %NUMBER_OF_PROCESSORS%
 
       - name: Deploy Qt dependencies
-        if: steps.version_info.outputs.has_tag == 'true'
         shell: cmd
         run: |
           windeployqt ^
@@ -475,6 +480,13 @@ jobs:
         with:
           name: wfview-windows-x64
           path: wfview-windows-x64-setup.exe
+
+      - name: Upload portable build
+        if: steps.version_info.outputs.has_tag != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: wfview-windows-x64-portable
+          path: wfview/wfview-release/
 
   # ═══════════════════════════════════════════════════════════════════
   #  macOS Universal Qt6 Build

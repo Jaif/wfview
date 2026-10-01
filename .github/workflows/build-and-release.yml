@@ -492,6 +492,7 @@ jobs:
   #  macOS Universal Qt6 Build
   # ═══════════════════════════════════════════════════════════════════
   build-macos:
+    if: false # macOS build temporarily disabled
     runs-on: macos-15-intel
     outputs:
       version_string: ${{ steps.version_info.outputs.version_string }}
@@ -1362,8 +1363,8 @@ jobs:
   # Publish Release (after all builds succeed)
   publish-release:
     runs-on: ubuntu-latest
-    needs: [build-windows-x86, build-windows-x64, build-macos, build-linux-appimage, build-linux-arm64-bookworm-appimage]
-    if: needs.build-macos.outputs.has_tag == 'true'
+    needs: [build-windows-x86, build-windows-x64, build-linux-appimage, build-linux-arm64-bookworm-appimage]
+    if: needs.build-windows-x86.outputs.has_tag == 'true'
 
     steps:
       - name: Checkout repository
@@ -1374,7 +1375,7 @@ jobs:
       - name: Gather release metadata
         id: meta
         run: |
-          VERSION_STRING="${{ needs.build-macos.outputs.version_string }}"
+          VERSION_STRING="${{ needs.build-windows-x86.outputs.version_string }}"
           SHORT=$(git rev-parse --short HEAD)
           echo "version_string=$VERSION_STRING" >> "$GITHUB_OUTPUT"
           echo "git_short=$SHORT" >> "$GITHUB_OUTPUT"
@@ -1397,6 +1398,7 @@ jobs:
           path: artifacts/
 
       - name: Download macOS DMG artifact
+        if: false # macOS build temporarily disabled
         uses: actions/download-artifact@v4
         with:
           name: wfview-macos-dmg

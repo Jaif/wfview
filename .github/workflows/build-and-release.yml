@@ -37,15 +37,19 @@ jobs:
           TAG=$(git -C wfview tag --points-at HEAD | head -1)
           if [ -n "$TAG" ]; then
             VERSION_STRING="$TAG"
-            VERSION_NUMBER="${TAG#v}"
+            VERSION_LABEL="${TAG#v}"
+            # Strip any suffix such as -tcifix: qmake and Qt IFW need a numeric version.
+            VERSION_NUMBER="${VERSION_LABEL%%-*}"
             HAS_TAG=true
           else
             VERSION_STRING="$SHORT"
+            VERSION_LABEL="$SHORT"
             VERSION_NUMBER="$SHORT"
             HAS_TAG=false
           fi
           echo "version_string=$VERSION_STRING" >> "$GITHUB_OUTPUT"
           echo "version_number=$VERSION_NUMBER" >> "$GITHUB_OUTPUT"
+          echo "version_label=$VERSION_LABEL" >> "$GITHUB_OUTPUT"
           echo "git_short=$SHORT" >> "$GITHUB_OUTPUT"
           echo "has_tag=$HAS_TAG" >> "$GITHUB_OUTPUT"
           echo "Version: $VERSION_STRING numeric=$VERSION_NUMBER (has_tag=$HAS_TAG)"
@@ -198,7 +202,7 @@ jobs:
         shell: cmd
         working-directory: wfview
         run: |
-          if "${{ steps.version_info.outputs.has_tag }}"=="true" (qmake wfview.pro CONFIG+=release VERSION="${{ steps.version_info.outputs.version_number }}") else (qmake wfview.pro CONFIG+=release)
+          if "${{ steps.version_info.outputs.has_tag }}"=="true" (qmake wfview.pro CONFIG+=release VERSION="${{ steps.version_info.outputs.version_number }}" VERSION_LABEL="${{ steps.version_info.outputs.version_label }}") else (qmake wfview.pro CONFIG+=release)
           jom -j %NUMBER_OF_PROCESSORS%
 
       - name: Deploy Qt dependencies
@@ -215,6 +219,7 @@ jobs:
         shell: pwsh
         run: |
           $VERSION = "${{ steps.version_info.outputs.version_number }}"
+          $LABEL = "${{ steps.version_info.outputs.version_label }}"
           $DATE = Get-Date -Format 'yyyy-MM-dd'
           $PKG_DIR = "wfview\installer\packages\org.wfview.wfview"
 
@@ -226,7 +231,7 @@ jobs:
 
           (Get-Content "wfview\installer\config\config.xml") `
             -replace '<Version>.*</Version>', "<Version>$VERSION</Version>" `
-            -replace '<Title>.*</Title>', "<Title>Welcome to the wfview v$VERSION (x86) installer</Title>" `
+            -replace '<Title>.*</Title>', "<Title>Welcome to the wfview v$LABEL (x86) installer</Title>" `
             -replace 'wfview \(x64\)', 'wfview (x86)' |
             Set-Content "wfview\installer\config\config.xml"
 
@@ -280,15 +285,19 @@ jobs:
           TAG=$(git -C wfview tag --points-at HEAD | head -1)
           if [ -n "$TAG" ]; then
             VERSION_STRING="$TAG"
-            VERSION_NUMBER="${TAG#v}"
+            VERSION_LABEL="${TAG#v}"
+            # Strip any suffix such as -tcifix: qmake and Qt IFW need a numeric version.
+            VERSION_NUMBER="${VERSION_LABEL%%-*}"
             HAS_TAG=true
           else
             VERSION_STRING="$SHORT"
+            VERSION_LABEL="$SHORT"
             VERSION_NUMBER="$SHORT"
             HAS_TAG=false
           fi
           echo "version_string=$VERSION_STRING" >> "$GITHUB_OUTPUT"
           echo "version_number=$VERSION_NUMBER" >> "$GITHUB_OUTPUT"
+          echo "version_label=$VERSION_LABEL" >> "$GITHUB_OUTPUT"
           echo "git_short=$SHORT" >> "$GITHUB_OUTPUT"
           echo "has_tag=$HAS_TAG" >> "$GITHUB_OUTPUT"
           echo "Version: $VERSION_STRING numeric=$VERSION_NUMBER (has_tag=$HAS_TAG)"
@@ -429,7 +438,7 @@ jobs:
         shell: cmd
         working-directory: wfview
         run: |
-          if "${{ steps.version_info.outputs.has_tag }}"=="true" (qmake wfview.pro CONFIG+=release VERSION="${{ steps.version_info.outputs.version_number }}") else (qmake wfview.pro CONFIG+=release)
+          if "${{ steps.version_info.outputs.has_tag }}"=="true" (qmake wfview.pro CONFIG+=release VERSION="${{ steps.version_info.outputs.version_number }}" VERSION_LABEL="${{ steps.version_info.outputs.version_label }}") else (qmake wfview.pro CONFIG+=release)
           jom -j %NUMBER_OF_PROCESSORS%
 
       - name: Deploy Qt dependencies
@@ -446,6 +455,7 @@ jobs:
         shell: pwsh
         run: |
           $VERSION = "${{ steps.version_info.outputs.version_number }}"
+          $LABEL = "${{ steps.version_info.outputs.version_label }}"
           $DATE = Get-Date -Format 'yyyy-MM-dd'
           $PKG_DIR = "wfview\installer\packages\org.wfview.wfview"
 
@@ -460,7 +470,7 @@ jobs:
           # Inject version and date into config.xml and package.xml
           (Get-Content "wfview\installer\config\config.xml") `
             -replace '<Version>.*</Version>', "<Version>$VERSION</Version>" `
-            -replace '<Title>.*</Title>', "<Title>Welcome to the wfview v$VERSION (x64) installer</Title>" |
+            -replace '<Title>.*</Title>', "<Title>Welcome to the wfview v$LABEL (x64) installer</Title>" |
             Set-Content "wfview\installer\config\config.xml"
 
           (Get-Content "$PKG_DIR\meta\package.xml") `

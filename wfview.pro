@@ -24,10 +24,13 @@ TEMPLATE = app
 # VERSION can be overridden on the qmake command line, e.g.:
 #   qmake ... VERSION="1.2.3"
 # If set, it replaces the default WFVIEW_VERSION.
+# VERSION must be numeric (it is used for the Windows version resource);
+# VERSION_LABEL optionally sets the displayed version, e.g. "1.2.3-test".
 isEmpty(VERSION) {
     DEFINES += WFVIEW_VERSION=\\\"2.22\\\"
 } else {
-    DEFINES += WFVIEW_VERSION=\\\"$$VERSION\\\"
+    isEmpty(VERSION_LABEL): VERSION_LABEL = $$VERSION
+    DEFINES += WFVIEW_VERSION=\\\"$$VERSION_LABEL\\\"
 }
 
 DEFINES += BUILD_WFVIEW

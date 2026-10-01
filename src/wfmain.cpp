@@ -497,11 +497,9 @@ void wfmain::openRig()
     connStatus = connConnecting;
     isRadioAdmin = true; // Set user to admin, will be reset if not.
     // M0VSE: This could be in a better place maybe?
-    if (prefs.audioSystem == tciAudio)
-    {
-        prefs.rxSetup.tci = tci;
-        prefs.txSetup.tci = tci;
-    }
+    // Always pass the TCI server so LAN audio can also feed TCI alongside local audio.
+    prefs.rxSetup.tci = tci;
+    prefs.txSetup.tci = tci;
 
     // Attach TX audio processor to the TX input setup
     if (!txProc) {
@@ -2230,11 +2228,8 @@ void wfmain::loadSettings()
         emit tciInit(prefs.tciPort);
     }
 
-    if (prefs.audioSystem == tciAudio)
-    {
-        prefs.rxSetup.tci = tci;
-        prefs.txSetup.tci = tci;
-    }
+    prefs.rxSetup.tci = tci;
+    prefs.txSetup.tci = tci;
 
     udpPrefs.connectionType = settings->value("ConnectionType", udpDefPrefs.connectionType).value<connectionType_t>();
     udpPrefs.clientName = settings->value("ClientName", udpDefPrefs.clientName).toString();

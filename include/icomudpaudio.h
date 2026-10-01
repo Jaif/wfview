@@ -59,6 +59,7 @@ public slots:
     void getRxLevels(quint16 amplitude, quint16 amplitudeRMS, quint16 latency, quint16 current, bool under, bool over);
     void getTxLevels(quint16 amplitude, quint16 amplitudeRMS, quint16 latency, quint16 current, bool under, bool over);
     void receiveAudioData(audioPacket audio);
+    void receiveTciTxAudioData(audioPacket audio);
 
 
 private slots:
@@ -71,6 +72,9 @@ private:
 	void dataReceived();
 	void watchdog();
 	void startAudio();
+	void startTciBridge();
+	void stopTciBridge();
+	void sendAudioPacket(const audioPacket &audio);
 	audioSetup rxSetup;
 	audioSetup txSetup;
 
@@ -81,6 +85,17 @@ private:
 
     audioHandlerBase* txaudio = Q_NULLPTR;
     QThread* txAudioThread = Q_NULLPTR;
+
+    // Extra TCI handlers used alongside local audio when the audio system is not TCI.
+    audioHandlerBase* tciRxAudio = Q_NULLPTR;
+    QThread* tciRxAudioThread = Q_NULLPTR;
+
+    audioHandlerBase* tciTxAudio = Q_NULLPTR;
+    QThread* tciTxAudioThread = Q_NULLPTR;
+
+    // Time since the last TCI TX audio packet; local mic audio is dropped while TCI is sending.
+    QElapsedTimer tciTxClock;
+    static constexpr qint64 tciTxHoldMs = 200;
 
     QTimer* txAudioTimer = Q_NULLPTR;
 	bool enableTx = true;

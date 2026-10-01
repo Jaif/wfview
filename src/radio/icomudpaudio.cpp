@@ -56,6 +56,7 @@ icomUdpAudio::~icomUdpAudio()
         txaudio->dispose();
         qDebug(logUdp()) << "[SHUTDOWN] txaudio->dispose() done";
     }
+    stopTciBridge();
 
     if (rxAudioThread != Q_NULLPTR) {
         qDebug(logUdp()) << "[SHUTDOWN] rxAudioThread->quit()";
@@ -100,7 +101,8 @@ void icomUdpAudio::watchdog()
                 txAudioThread->wait();
                 txAudioThread = Q_NULLPTR;
                 txaudio = Q_NULLPTR;
-            }            
+            }
+            stopTciBridge();
         }
     }
     else
@@ -123,6 +125,22 @@ void icomUdpAudio::receiveAudioData(audioPacket audio) {
     if (txaudio == Q_NULLPTR) {
         return;
     }
+    // While a TCI client is sending TX audio, it takes priority over the local mic.
+    if (tciTxClock.isValid() && tciTxClock.elapsed() < tciTxHoldMs) {
+        return;
+    }
+    sendAudioPacket(audio);
+}
+
+void icomUdpAudio::receiveTciTxAudioData(audioPacket audio) {
+    if (tciTxAudio == Q_NULLPTR) {
+        return;
+    }
+    tciTxClock.start();
+    sendAudioPacket(audio);
+}
+
+void icomUdpAudio::sendAudioPacket(const audioPacket &audio) {
     if (audio.data.length() > 0) {
         int len = 0;
 
@@ -354,6 +372,80 @@ void icomUdpAudio::startAudio() {
 
     emit setupRxAudio(rxSetup);
 
+    startTciBridge();
+}
+
+void icomUdpAudio::startTciBridge()
+{
+#ifndef BUILD_WFSERVER
+    // When the audio system is TCI the main handlers already serve TCI.
+    if (rxSetup.type == tciAudio || rxSetup.tci == Q_NULLPTR || tciRxAudioThread != Q_NULLPTR) {
+        return;
+    }
+
+    // TCI clients get unprocessed audio at full level, independent of local AF gain.
+    audioSetup tciRx = rxSetup;
+    tciRx.type = tciAudio;
+    tciRx.isinput = false;
+    tciRx.portInt = 0;
+    tciRx.localAFgain = 255;
+    tciRx.rxProc = nullptr;
+
+    tciRxAudio = new audioHandlerTciOutput();
+    tciRxAudioThread = new QThread(this);
+    tciRxAudioThread->setObjectName("tciRxAudio()");
+    tciRxAudio->moveToThread(tciRxAudioThread);
+    tciRxAudioThread->start(QThread::TimeCriticalPriority);
+
+    connect(this, SIGNAL(haveAudioData(audioPacket)), tciRxAudio, SLOT(incomingAudio(audioPacket)));
+    connect(this, SIGNAL(haveChangeLatency(quint16)), tciRxAudio, SLOT(changeLatency(quint16)));
+    connect(tciRxAudioThread, SIGNAL(finished()), tciRxAudio, SLOT(deleteLater()));
+    QMetaObject::invokeMethod(tciRxAudio, "init", Qt::QueuedConnection, Q_ARG(audioSetup, tciRx));
+
+    if (enableTx) {
+        audioSetup tciTx = txSetup;
+        tciTx.type = tciAudio;
+        tciTx.isinput = true;
+        tciTx.portInt = 0;
+        tciTx.localAFgain = 255;
+        tciTx.txProc = nullptr;
+
+        tciTxAudio = new audioHandlerTciInput();
+        tciTxAudioThread = new QThread(this);
+        tciTxAudioThread->setObjectName("tciTxAudio()");
+        tciTxAudio->moveToThread(tciTxAudioThread);
+        tciTxAudioThread->start(QThread::TimeCriticalPriority);
+
+        connect(tciTxAudio, SIGNAL(haveAudioData(audioPacket)), this, SLOT(receiveTciTxAudioData(audioPacket)));
+        connect(tciTxAudioThread, SIGNAL(finished()), tciTxAudio, SLOT(deleteLater()));
+        QMetaObject::invokeMethod(tciTxAudio, "init", Qt::QueuedConnection, Q_ARG(audioSetup, tciTx));
+    }
+
+    qInfo(logAudio()) << "TCI audio bridge enabled alongside local audio";
+#endif
+}
+
+void icomUdpAudio::stopTciBridge()
+{
+    // As in the destructor, dispose() must run before quit() while the thread's event loop is alive.
+    if (tciRxAudio) {
+        tciRxAudio->dispose();
+    }
+    if (tciTxAudio) {
+        tciTxAudio->dispose();
+    }
+    if (tciRxAudioThread != Q_NULLPTR) {
+        tciRxAudioThread->quit();
+        tciRxAudioThread->wait();
+    }
+    if (tciTxAudioThread != Q_NULLPTR) {
+        tciTxAudioThread->quit();
+        tciTxAudioThread->wait();
+    }
+    tciRxAudio = Q_NULLPTR;
+    tciRxAudioThread = Q_NULLPTR;
+    tciTxAudio = Q_NULLPTR;
+    tciTxAudioThread = Q_NULLPTR;
 }
 
 

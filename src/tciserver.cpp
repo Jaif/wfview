@@ -652,10 +652,20 @@ void tciServer::processIncomingBinaryMessage(QByteArray message)
 {
     QWebSocket *pClient = qobject_cast<QWebSocket *>(sender());
     if (pClient) {
+        if (message.size() < int(iqHeaderSize))
+            return;
         dataStream *pStream = reinterpret_cast<dataStream*>(message.data());
-        if (pStream->type == TxAudioStream && pStream->length > 0)
+        const int payloadSize = int(pStream->length * sizeof(float));
+        if (pStream->type == TxAudioStream && pStream->length > 0 &&
+            message.size() >= int(iqHeaderSize) + payloadSize)
         {
-            QByteArray tempData(pStream->length * sizeof(float),0x0);
+            // Only accept TX audio from a client that has requested transmit.
+            auto clientIt = clients.find(pClient);
+            if (clientIt == clients.end() || !clientIt.value().transmitting)
+                return;
+            clientIt.value().txaudio = true;
+
+            QByteArray tempData(payloadSize,0x0);
             memcpy(tempData.data(),pStream->data,tempData.size());
             //qInfo() << QString("Received audio from client: %0 Sample: %1 Format: %2 Length: %3(%4 bytes) Type: %5").arg(pStream->receiver).arg(pStream->sampleRate).arg(pStream->format).arg(pStream->length).arg(tempData.size()).arg(pStream->type);
             emit sendTCIAudio(tempData);

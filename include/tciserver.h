@@ -18,6 +18,7 @@
 #endif
 
 #define TCI_AUDIO_LENGTH 4096
+#define TCI_AUDIO_SAMPLES (TCI_AUDIO_LENGTH / 2) // Stereo frames per audio packet
 struct tciCommandStruct
 {
     const char *str;
@@ -69,6 +70,16 @@ class tciServer : public QObject
         bool connected=true;
         bool rxaudio=false;
         bool txaudio=false;
+        bool transmitting=false;
+        bool iqaudio=false;
+        bool lineout=false;
+        bool rxSensors=false;
+        bool txSensors=false;
+        int audioSampleRate=48000;
+        int audioChannels=2;
+        int audioSamples=TCI_AUDIO_SAMPLES;
+        int txAudioBuffering=50;
+        iqDataType audioSampleType=IqFloat32;
     };
 
 
@@ -96,6 +107,20 @@ private slots:
 
 private:
     int getValueRange(funcs func,char min=0, char max=0, uchar rx=0);
+    int fromTciRange(funcs func, int value, int min, int max) const;
+    int toTciRange(funcs func, int min, int max, uchar rx=0) const;
+    void sendInitialState(QWebSocket *socket);
+    void processCommand(QWebSocket *client, const QString &rawCommand);
+    QString commandReply(const QString &command, const QStringList &args) const;
+    bool setCommandValue(const QString &command, const QStringList &args);
+    void updateClientState(QWebSocket *client, const QString &command, const QStringList &args);
+    QVariant cacheValue(funcs func, uchar receiver = 0) const;
+    bool cacheBool(funcs func, uchar receiver = 0, bool fallback = false) const;
+    int cacheInt(funcs func, uchar receiver = 0, int fallback = 0) const;
+    double cacheDouble(funcs func, uchar receiver = 0, double fallback = 0.0) const;
+    freqt cacheFreq(funcs func, uchar receiver = 0) const;
+    modeInfo cacheMode(funcs func, uchar receiver = 0) const;
+    void queueIfSupported(funcs func, const QVariant &value, uchar receiver = 0, bool unique = false);
 
     QWebSocketServer *server;
     QMap<QWebSocket *, connStatus> clients;
@@ -104,8 +129,8 @@ private:
     QByteArray txAudioData;
     QByteArray txChrono;
     rigCapabilities* rigCaps = Q_NULLPTR;
-    QString tciMode(modeInfo m);
-    modeInfo rigMode(QString);
+    QString tciMode(modeInfo m) const;
+    modeInfo rigMode(const QString &mode, funcs modeFunc, uchar receiver) const;
     int dBmConversion = 73;
 };
 

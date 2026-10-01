@@ -158,9 +158,8 @@ void tciServer::onNewConnection()
 {
     
     QWebSocket *pSocket = server->nextPendingConnection();
-    vfoCommandType t = queue->getVfoCommand(vfoA,false,false);
 
-    if (rigCaps == Q_NULLPTR)
+    if (rigCaps == nullptr)
     {
         qWarning(logTCIServer()) << "No current rig connection, denying connection request.";
         pSocket->abort();
@@ -175,11 +174,26 @@ void tciServer::onNewConnection()
 
     qInfo() << "TCI client connected:" << pSocket;
     clients.insert(pSocket,connStatus());
-    pSocket->sendTextMessage(QString("protocol:WFVIEW,1.9;"));
-    pSocket->sendTextMessage(QString("device:%0;").arg(rigCaps->modelName));
-    pSocket->sendTextMessage(QString("receive_only:%0;").arg(rigCaps->hasTransmit?"false":"true"));
-    pSocket->sendTextMessage(QString("trx_count:%0;").arg(rigCaps->numReceiver));
-    pSocket->sendTextMessage(QString("channels_count:%0;").arg(rigCaps->numVFO));
+    sendInitialState(pSocket);
+}
+
+void tciServer::sendInitialState(QWebSocket *socket)
+{
+    if (!socket || !rigCaps)
+        return;
+
+    const auto sendTciText = [socket](const QString &text) {
+        qDebug() << "TCI Text Message sent:" << text;
+        socket->sendTextMessage(text);
+    };
+
+    sendTciText(QStringLiteral("protocol:WFVIEW,1.9;"));
+    sendTciText(QStringLiteral("device:%1;").arg(rigCaps->modelName));
+    sendTciText(QStringLiteral("receive_only:%1;").arg(rigCaps->hasTransmit ? "false" : "true"));
+    sendTciText(QStringLiteral("trx_count:%1;").arg(rigCaps->numReceiver));
+    sendTciText(QStringLiteral("channels_count:%1;").arg(rigCaps->numVFO));
+    sendTciText(QStringLiteral("channel_count:%1;").arg(rigCaps->numVFO));
+
     quint64 start=UINT64_MAX;
     quint64 end=0;
     for (auto &band: rigCaps->bands)
@@ -189,15 +203,20 @@ void tciServer::onNewConnection()
         if (end < band.highFreq)
             end = band.highFreq;
     }
-    pSocket->sendTextMessage(QString("vfo_limits:%0,%1;").arg(start).arg(end));
-    pSocket->sendTextMessage(QString("if_limits:-19531,19531;"));
+    if (start == UINT64_MAX)
+        start = 0;
+    sendTciText(QStringLiteral("vfo_limits:%1,%2;").arg(start).arg(end));
+    sendTciText(QStringLiteral("if_limits:-19531,19531;"));
+
+    const bool hasDataModes = rigCaps->commands.contains(funcDataModeWithFilter) ||
+                              rigCaps->commands.contains(funcDataMode);
     QString mods = "modulations_list:";
     for (modeInfo &mi: rigCaps->modes)
     {
 
         mods+=mi.name.toUpper();
         mods+=",";
-        if (mi.reg == modeUSB || mi.reg == modeLSB)
+        if (hasDataModes && (mi.reg == modeUSB || mi.reg == modeLSB))
         {
             mods+=QString("DIG%0").arg(mi.name.at(0));
             mods+=",";
@@ -205,17 +224,29 @@ void tciServer::onNewConnection()
     }
     mods.chop(1);
     mods+=";";
-    pSocket->sendTextMessage(mods);
-    pSocket->sendTextMessage(QString("vfo:0,0,%0").arg(queue->getCache(t.freqFunc,t.receiver).value.value<freqt>().Hz));
-    pSocket->sendTextMessage(QString("modulation:0,%0").arg(tciMode(queue->getCache(t.modeFunc,t.receiver).value.value<modeInfo>())));
-    pSocket->sendTextMessage(QString("iq_samplerate:48000;"));
-    pSocket->sendTextMessage(QString("audio_samplerate:48000;"));
-    pSocket->sendTextMessage(QString("volume:%0;").arg(getValueRange(funcAfGain,-60,0,t.receiver)));
-    pSocket->sendTextMessage(QString("mute:%0;").arg(queue->getCache(funcAFMute,t.receiver).value.value<bool>()?"true":"false"));
-    pSocket->sendTextMessage(QString("mon_volume:%0;").arg(getValueRange(funcMonitorGain,-60,0,t.receiver)));
-    pSocket->sendTextMessage(QString("mon_enable:%0;").arg(queue->getCache(funcMonitor,t.receiver).value.value<bool>()?"false":"frue"));
-
-    pSocket->sendTextMessage(QString("ready;"));
+    sendTciText(mods);
+    for (uchar rx = 0; rx < rigCaps->numReceiver; ++rx)
+    {
+        vfoCommandType rxVfo = queue->getVfoCommand(vfoA,rx,false);
+        sendTciText(QStringLiteral("vfo:%1,0,%2;").arg(rx).arg(cacheFreq(rxVfo.freqFunc,rxVfo.receiver).Hz));
+        sendTciText(QStringLiteral("modulation:%1,%2;").arg(rx).arg(tciMode(cacheMode(rxVfo.modeFunc,rxVfo.receiver))));
+        sendTciText(QStringLiteral("trx:%1,%2;").arg(rx).arg(cacheBool(funcTransceiverStatus,rx) ? "true" : "false"));
+        sendTciText(QStringLiteral("split_enable:%1,%2;").arg(rx).arg(cacheBool(funcSplitStatus,rx) ? "true" : "false"));
+        sendTciText(QStringLiteral("rx_channel_enable:%1,0,true;").arg(rx));
+        sendTciText(QStringLiteral("tx_enable:%1,%2;").arg(rx).arg(rigCaps->hasTransmit ? "true" : "false"));
+    }
+    sendTciText(QStringLiteral("iq_samplerate:48000;"));
+    sendTciText(QStringLiteral("audio_samplerate:48000;"));
+    sendTciText(QStringLiteral("audio_stream_sample_type:float32;"));
+    sendTciText(QStringLiteral("audio_stream_channels:2;"));
+    sendTciText(QStringLiteral("audio_stream_samples:%1;").arg(TCI_AUDIO_SAMPLES));
+    sendTciText(QStringLiteral("tx_stream_audio_buffering:50;"));
+    sendTciText(QStringLiteral("volume:%1;").arg(toTciRange(funcAfGain, -60, 0, 0)));
+    sendTciText(QStringLiteral("mute:%1;").arg(cacheBool(funcAFMute, 0) ? "true" : "false"));
+    sendTciText(QStringLiteral("mon_volume:%1;").arg(toTciRange(funcMonitorGain, -60, 0, 0)));
+    sendTciText(QStringLiteral("mon_enable:%1;").arg(cacheBool(funcMonitor, 0) ? "true" : "false"));
+    sendTciText(QStringLiteral("start;"));
+    sendTciText(QStringLiteral("ready;"));
 }
 
 int tciServer::getValueRange(funcs func, char min, char max,uchar rx)
@@ -228,6 +259,77 @@ int tciServer::getValueRange(funcs func, char min, char max,uchar rx)
         val =  static_cast<int>(r + (r < 0 ? -0.5f : 0.5f));   // round to nearest
     }
     return val;
+}
+
+int tciServer::fromTciRange(funcs func, int value, int min, int max) const
+{
+    if (!rigCaps || !rigCaps->commands.contains(func) || max == min)
+        return value;
+
+    const auto cmd = rigCaps->commands.value(func);
+    const double scaled = cmd.minVal + (double(value - min) * double(cmd.maxVal - cmd.minVal)) / double(max - min);
+    return qBound(int(cmd.minVal), int(scaled + (scaled < 0.0 ? -0.5 : 0.5)), int(cmd.maxVal));
+}
+
+int tciServer::toTciRange(funcs func, int min, int max, uchar rx) const
+{
+    if (!rigCaps || !rigCaps->commands.contains(func) || max == min)
+        return min;
+
+    const auto cmd = rigCaps->commands.value(func);
+    const int raw = cacheInt(func, rx, cmd.minVal);
+    if (cmd.maxVal == cmd.minVal)
+        return min;
+
+    const double scaled = min + (double(raw - cmd.minVal) * double(max - min)) / double(cmd.maxVal - cmd.minVal);
+    return qBound(min, int(scaled + (scaled < 0.0 ? -0.5 : 0.5)), max);
+}
+
+QVariant tciServer::cacheValue(funcs func, uchar receiver) const
+{
+    return queue ? queue->getCache(func, receiver).value : QVariant();
+}
+
+bool tciServer::cacheBool(funcs func, uchar receiver, bool fallback) const
+{
+    const QVariant value = cacheValue(func, receiver);
+    return value.isValid() ? value.toBool() : fallback;
+}
+
+int tciServer::cacheInt(funcs func, uchar receiver, int fallback) const
+{
+    const QVariant value = cacheValue(func, receiver);
+    return value.isValid() ? value.toInt() : fallback;
+}
+
+double tciServer::cacheDouble(funcs func, uchar receiver, double fallback) const
+{
+    const QVariant value = cacheValue(func, receiver);
+    return value.isValid() ? value.toDouble() : fallback;
+}
+
+freqt tciServer::cacheFreq(funcs func, uchar receiver) const
+{
+    const QVariant value = cacheValue(func, receiver);
+    return value.isValid() ? value.value<freqt>() : freqt();
+}
+
+modeInfo tciServer::cacheMode(funcs func, uchar receiver) const
+{
+    const QVariant value = cacheValue(func, receiver);
+    return value.isValid() ? value.value<modeInfo>() : modeInfo();
+}
+
+void tciServer::queueIfSupported(funcs func, const QVariant &value, uchar receiver, bool unique)
+{
+    if (!queue || !rigCaps || func == funcNone || !value.isValid() || !rigCaps->commands.contains(func))
+        return;
+
+    const queueItem item(func, value, false, receiver);
+    if (unique)
+        queue->addUnique(priorityImmediate, item);
+    else
+        queue->add(priorityImmediate, item);
 }
 
 void tciServer::processIncomingTextMessage(QString message)
@@ -245,191 +347,304 @@ void tciServer::processIncomingTextMessage(QString message)
     it.value().connected = true;
 
     qDebug() << "TCI Text Message received:" << message;
-    QString cmd = message.section(':',0,0);
-    QStringList arg = message.section(':',1,1).split(',');
-    arg[arg.length()-1].chop(1);
-    QString reply = message;
+    const QStringList commands = message.split(';');
+    for (const QString &rawCommand: commands)
+        processCommand(pClient, rawCommand.trimmed());
+}
 
-    uchar rx = 0;
-    if (arg.size()>0) {
-        rx = arg[0].toUInt();
+void tciServer::processCommand(QWebSocket *client, const QString &rawCommand)
+{
+    if (!client || rawCommand.isEmpty())
+        return;
+
+    const int separator = rawCommand.indexOf(':');
+    const QString command = (separator >= 0 ? rawCommand.left(separator) : rawCommand).trimmed().toLower();
+    const QString payload = separator >= 0 ? rawCommand.mid(separator + 1) : QString();
+    QStringList args = payload.isEmpty() ? QStringList() : payload.split(',');
+    for (QString &arg: args)
+        arg = arg.trimmed();
+
+    updateClientState(client, command, args);
+    const bool changed = setCommandValue(command, args);
+    if (changed)
+        return;
+
+    const QString reply = commandReply(command, args);
+    if (!reply.isEmpty()) {
+        qDebug() << "Reply:" << reply;
+        client->sendTextMessage(reply);
     }
-    uchar vfo = 0;
-    if (arg.size()>1) {
-        vfo = arg[1].toUInt();
+}
+
+void tciServer::updateClientState(QWebSocket *client, const QString &command, const QStringList &args)
+{
+    auto it = clients.find(client);
+    if (it == clients.end())
+        return;
+
+    if (command == QLatin1String("audio_start"))
+        it.value().rxaudio = true;
+    else if (command == QLatin1String("audio_stop"))
+        it.value().rxaudio = false;
+    else if (command == QLatin1String("iq_start"))
+        it.value().iqaudio = true;
+    else if (command == QLatin1String("iq_stop"))
+        it.value().iqaudio = false;
+    else if (command == QLatin1String("line_out_start"))
+        it.value().lineout = true;
+    else if (command == QLatin1String("line_out_stop"))
+        it.value().lineout = false;
+    else if (command == QLatin1String("rx_sensors_enable") && args.size() >= 2)
+        it.value().rxSensors = args[1].compare(QLatin1String("true"), Qt::CaseInsensitive) == 0;
+    else if (command == QLatin1String("tx_sensors_enable") && args.size() >= 2)
+        it.value().txSensors = args[1].compare(QLatin1String("true"), Qt::CaseInsensitive) == 0;
+    else if (command == QLatin1String("trx") && args.size() >= 2) {
+        it.value().transmitting = args[1].compare(QLatin1String("true"), Qt::CaseInsensitive) == 0;
+        if (!it.value().transmitting)
+            it.value().txaudio = false;
     }
-    bool set = false;
-
-    for (int i=0; tci_commands[i].str != 0x00; i++)
-    {
-        cmd=cmd.toLower();
-        if (!strncmp(cmd.toLocal8Bit(), tci_commands[i].str,MAXNAMESIZE))
-        {
-            tciCommandStruct tc = tci_commands[i];
-            uchar numArgs=0;
-            if (tc.arg1 != typeNone)
-                numArgs++;
-            if (tc.arg2 != typeNone)
-                numArgs++;
-            if (tc.arg3 != typeNone)
-                numArgs++;
-
-            // Some clients seem to send additional text that's unexpected!
-            if (numArgs <= arg.count())
-            {
-                set = true;
-                qInfo() << "This is a set command";
-            }
-
-            qDebug() << "Found command:" << tc.str;
-            if (vfo && rigCaps->numVFO <= vfo && rigCaps->numReceiver > 1)
-            {
-                // invalid VFO swap to receiver instead.
-                rx = vfo;
-                vfo = 0;
-            }
-            vfoCommandType t = queue->getVfoCommand(vfo_t(vfo),rx,set);
-            funcs func = tc.func;
-
-            if (cmd == "rx_mute" )
-            {
-            }
-            else if (cmd == "audio_samplerate" )
-            {
-            }
-            else if (set)
-            {
-                QVariant val;
-                if (arg.count() == 1 && tc.arg1 == typeUChar)
-                {
-                    val = QVariant::fromValue(uchar(arg[0].toInt(NULL)));
-                }
-
-                if (arg.count() == 1 && tc.arg1 == typeUShort)
-                {
-                    val = QVariant::fromValue(ushort(arg[0].toInt(NULL)*2.55));
-                }
-
-                if (arg.count() == 2 && tc.arg2 == typeUChar)
-                {
-                    val = QVariant::fromValue(uchar(arg[1].toInt(NULL)));
-                }
-
-                if (arg.count() == 2 && tc.arg2 == typeUShort)
-                {
-                    val = QVariant::fromValue(ushort(arg[1].toInt(NULL)*2.55));
-                }
-                else if (arg.count() == 3 && tc.arg3 == typeFreq)
-                {
-                    val=QVariant::fromValue<freqt>(freqt(arg[2].toUInt(),arg[2].toUInt() / (double)1E6,selVFO_t::activeVFO));
-                    func = t.freqFunc;
-                }
-                else if (tc.arg2 == typeMode)
-                {
-                    val = QVariant::fromValue<modeInfo>(rigMode(arg[1]));
-                    func = t.modeFunc;
-                }
-                else if (tc.arg2 == typeBinary)
-                {
-                    val = QVariant::fromValue(arg[1]=="true"?true:false);
-                }
-
-                if (func != funcNone && val.isValid()) {
-                    queue->add(priorityImmediate,queueItem(func,val,false,rx));
-                    //if (func != funcMode)
-                    //continue;
-                }
-            }
-
-            if (cmd == "audio_start" )
-            {
-                qInfo() << "Starting audio";
-                it.value().rxaudio=true;
-                reply = QString("audio_start:%0").arg(rx);
-            }
-            else if (cmd == "audio_stop" )
-            {
-                it.value().rxaudio=false;
-                qInfo() << "Stopping audio";
-                reply = QString("audio_stop:%0").arg(rx);
-            }
-
-            if (tc.func != funcNone)
-            {
-                reply = QString("%0").arg(cmd);
-                QVariant v = queue->getCache(func,t.receiver).value;
-                if (!v.isValid())
-                {
-                    qWarning() << "Requested cache item contains no data" << funcString[func] << "on rx" << t.receiver;
-                    continue;
-                } else {
-                    if (tc.arg3 == typeFreq) {
-                        v = queue->getCache(t.freqFunc,t.receiver).value;
-                    }
-                    if (tc.arg3 == typeMode) {
-                        v = queue->getCache(t.modeFunc,t.receiver).value;
-                    }
-                }
-
-                if (tc.arg1 == typeUChar && numArgs > 1)
-                {
-                    // Multi arg replies always contain receiver number
-                    reply += QString(":%0").arg(arg[0]);
-                }
-
-                if (numArgs == 1 && tc.arg1 == typeUChar)
-                {
-                    reply += QString(":%0").arg(v.value<uchar>());
-                }
-                else if (numArgs ==1 && tc.arg1 == typeUShort)
-                {
-                    reply += QString(":%0").arg(round(v.value<ushort>()/2.55));
-                }
-                else if (numArgs == 2 && tc.arg2 == typeUChar)
-                {
-
-                    reply += QString(",%0").arg(v.value<uchar>());
-                }
-                else if (numArgs == 2 && tc.arg2 == typeUShort)
-                {
-                    reply += QString(",%0").arg(round(v.value<ushort>()/2.55));
-                }
-                else if (numArgs == 3 &&  tc.arg3 == typeFreq)
-                {
-                    reply += QString(",%0,%1").arg(arg[1].toInt(NULL)).arg(v.value<freqt>().Hz);
-                }
-                else if (numArgs == 3 && tc.arg3 == typeDouble)
-                {
-                    reply += QString(",%0,%1").arg(vfo).arg(v.value<double>()-dBmConversion,0,'f',0);
-                }
-
-                else if (tc.arg2 == typeMode)
-                {
-                    reply += QString(",%0").arg(tciMode(v.value<modeInfo>()));
-                }
-                else if (tc.arg2 == typeBinary)
-                {
-                    reply += QString(",%0").arg(v.value<bool>()?"true":"false");
-                }
-                else
-                {
-                    // Nothing to say!
-                    qInfo() << "Nothing to say:" << reply;
-                    return;
-                }
-                reply += ";";
-            }
-            else
-            {
-                reply = message; // Reply with the sent message
-            }
-
-            if (pClient) {
-                qDebug() << "Reply:" << reply;
-                pClient->sendTextMessage(reply);
-            }
-        }
+    else if (command == QLatin1String("audio_samplerate") && !args.isEmpty())
+        it.value().audioSampleRate = args[0].toInt();
+    else if (command == QLatin1String("audio_stream_channels") && !args.isEmpty())
+        it.value().audioChannels = qBound(1, args[0].toInt(), 2);
+    else if (command == QLatin1String("audio_stream_samples") && !args.isEmpty())
+        it.value().audioSamples = qBound(100, args[0].toInt(), 2048);
+    else if (command == QLatin1String("tx_stream_audio_buffering") && !args.isEmpty())
+        it.value().txAudioBuffering = qBound(50, args[0].toInt(), 500);
+    else if (command == QLatin1String("audio_stream_sample_type") && !args.isEmpty()) {
+        const QString sampleType = args[0].toLower();
+        if (sampleType == QLatin1String("int16"))
+            it.value().audioSampleType = IqInt16;
+        else if (sampleType == QLatin1String("int24"))
+            it.value().audioSampleType = IqInt24;
+        else if (sampleType == QLatin1String("int32"))
+            it.value().audioSampleType = IqInt32;
+        else
+            it.value().audioSampleType = IqFloat32;
     }
+}
+
+bool tciServer::setCommandValue(const QString &command, const QStringList &args)
+{
+    if (!queue || !rigCaps || args.isEmpty())
+        return false;
+
+    const auto isBool = [](const QString &value) {
+        return value.compare(QLatin1String("true"), Qt::CaseInsensitive) == 0 ||
+               value.compare(QLatin1String("false"), Qt::CaseInsensitive) == 0;
+    };
+    const auto boolValue = [](const QString &value) {
+        return value.compare(QLatin1String("true"), Qt::CaseInsensitive) == 0;
+    };
+
+    if (command == QLatin1String("split_enable") && args.size() == 1 && isBool(args[0]))
+        return false; // Newer clients use this as a status probe; do not change split.
+
+    const uchar rx = uchar(args.value(0).toUInt());
+    const uchar vfo = uchar(args.value(1).toUInt());
+    const vfoCommandType vfoSet = queue->getVfoCommand(vfo_t(vfo), rx, true);
+
+    if (command == QLatin1String("vfo") && args.size() >= 3) {
+        queueIfSupported(vfoSet.freqFunc, QVariant::fromValue<freqt>(freqt(args[2].toULongLong(), args[2].toDouble() / 1E6, activeVFO)), vfoSet.receiver, true);
+        return true;
+    }
+    if (command == QLatin1String("modulation") && args.size() >= 2) {
+        const modeInfo requested = rigMode(args[1], vfoSet.modeFunc, vfoSet.receiver);
+        if (requested.mk == modeUnknown)
+            return false;
+
+        queueIfSupported(vfoSet.modeFunc, QVariant::fromValue<modeInfo>(requested), vfoSet.receiver);
+        if (vfoSet.modeFunc == funcModeSet && rigCaps->commands.contains(funcDataModeWithFilter))
+            queueIfSupported(funcDataModeWithFilter, QVariant::fromValue<modeInfo>(requested), vfoSet.receiver);
+        if (rigCaps->manufacturer == manufIcom && rigCaps->commands.contains(funcRoofingFilter))
+            queue->addUnique(priorityHighest, funcRoofingFilter, false, vfoSet.receiver);
+        return true;
+    }
+    if (command == QLatin1String("trx") && args.size() >= 2) {
+        queueIfSupported(funcTransceiverStatus, QVariant::fromValue(boolValue(args[1])), rx);
+        return true;
+    }
+    if (command == QLatin1String("tune") && args.size() >= 2) {
+        queueIfSupported(funcTunerStatus, QVariant::fromValue(boolValue(args[1])), rx);
+        return true;
+    }
+    if (command == QLatin1String("drive") && args.size() >= 2) {
+        queueIfSupported(funcRFPower, QVariant::fromValue<ushort>(ushort(fromTciRange(funcRFPower, args[1].toInt(), 0, 100))), rx, true);
+        return true;
+    }
+    if (command == QLatin1String("rit_enable") && args.size() >= 2) {
+        queueIfSupported(funcRitStatus, QVariant::fromValue(boolValue(args[1])), rx);
+        return true;
+    }
+    if (command == QLatin1String("xit_enable") && args.size() >= 2) {
+        queueIfSupported(funcXitStatus, QVariant::fromValue(boolValue(args[1])), rx);
+        return true;
+    }
+    if (command == QLatin1String("split_enable") && args.size() >= 2 && isBool(args[1])) {
+        queueIfSupported(funcSplitStatus, QVariant::fromValue(boolValue(args[1])), rx);
+        return true;
+    }
+    if (command == QLatin1String("rit_offset") && args.size() >= 2) {
+        queueIfSupported(funcRitFreq, QVariant::fromValue<short>(short(args[1].toInt())), rx, true);
+        return true;
+    }
+    if (command == QLatin1String("xit_offset") && args.size() >= 2) {
+        queueIfSupported(funcXitFreq, QVariant::fromValue<short>(short(args[1].toInt())), rx, true);
+        return true;
+    }
+    if (command == QLatin1String("rx_filter_band") && args.size() >= 3) {
+        queueIfSupported(funcFilterWidth, QVariant::fromValue<ushort>(ushort(qAbs(args[2].toInt() - args[1].toInt()))), rx, true);
+        return true;
+    }
+    if (command == QLatin1String("cw_keyer_speed") && !args.isEmpty()) {
+        queueIfSupported(funcKeySpeed, QVariant::fromValue<ushort>(ushort(args[0].toUInt())), 0, true);
+        return true;
+    }
+    if (command == QLatin1String("volume") && !args.isEmpty()) {
+        queueIfSupported(funcAfGain, QVariant::fromValue<ushort>(ushort(fromTciRange(funcAfGain, args[0].toInt(), -60, 0))), 0, true);
+        return true;
+    }
+    if (command == QLatin1String("mute") && !args.isEmpty()) {
+        queueIfSupported(funcAFMute, QVariant::fromValue(boolValue(args[0])), 0);
+        return true;
+    }
+    if (command == QLatin1String("rx_mute") && args.size() >= 2) {
+        queueIfSupported(funcAFMute, QVariant::fromValue(boolValue(args[1])), rx);
+        return true;
+    }
+    if (command == QLatin1String("rx_volume") && args.size() >= 3) {
+        queueIfSupported(funcAfGain, QVariant::fromValue<ushort>(ushort(fromTciRange(funcAfGain, args[2].toInt(), -60, 0))), rx, true);
+        return true;
+    }
+    if (command == QLatin1String("mon_volume") && !args.isEmpty()) {
+        queueIfSupported(funcMonitorGain, QVariant::fromValue<ushort>(ushort(fromTciRange(funcMonitorGain, args[0].toInt(), -60, 0))), 0, true);
+        return true;
+    }
+    if (command == QLatin1String("mon_enable") && !args.isEmpty()) {
+        queueIfSupported(funcMonitor, QVariant::fromValue(boolValue(args[0])), 0);
+        return true;
+    }
+    if (command == QLatin1String("rx_nb_enable") && args.size() >= 2) {
+        queueIfSupported(funcNoiseBlanker, QVariant::fromValue(boolValue(args[1])), rx);
+        return true;
+    }
+    if (command == QLatin1String("rx_nr_enable") && args.size() >= 2) {
+        queueIfSupported(funcNoiseReduction, QVariant::fromValue(boolValue(args[1])), rx);
+        return true;
+    }
+    if (command == QLatin1String("rx_anf_enable") && args.size() >= 2) {
+        queueIfSupported(funcAutoNotch, QVariant::fromValue(boolValue(args[1])), rx);
+        return true;
+    }
+    if (command == QLatin1String("rx_apf_enable") && args.size() >= 2) {
+        queueIfSupported(funcAudioPeakFilter, QVariant::fromValue(boolValue(args[1])), rx);
+        return true;
+    }
+    if (command == QLatin1String("rx_nf_enable") && args.size() >= 2) {
+        queueIfSupported(funcManualNotch, QVariant::fromValue(boolValue(args[1])), rx);
+        return true;
+    }
+    if ((command == QLatin1String("lock") || command == QLatin1String("vfo_lock")) && args.size() >= 2) {
+        queueIfSupported(funcDialLock, QVariant::fromValue(boolValue(args.last())), rx);
+        return true;
+    }
+    if (command == QLatin1String("sql_enable") && args.size() >= 2) {
+        queueIfSupported(funcSMeterSqlStatus, QVariant::fromValue(boolValue(args[1])), rx);
+        return true;
+    }
+    if (command == QLatin1String("sql_level") && args.size() >= 2) {
+        queueIfSupported(funcSquelch, QVariant::fromValue<ushort>(ushort(fromTciRange(funcSquelch, args[1].toInt(), -140, 0))), rx, true);
+        return true;
+    }
+
+    return false;
+}
+
+QString tciServer::commandReply(const QString &command, const QStringList &args) const
+{
+    if (!queue)
+        return {};
+
+    uchar rx = uchar(args.value(0).toUInt());
+    uchar vfo = uchar(args.value(1).toUInt());
+
+    if (command == QLatin1String("split_enable") && args.size() == 1 &&
+        (args[0].compare(QLatin1String("true"), Qt::CaseInsensitive) == 0 ||
+         args[0].compare(QLatin1String("false"), Qt::CaseInsensitive) == 0))
+        rx = 0;
+
+    const vfoCommandType vfoRead = queue->getVfoCommand(vfo_t(vfo), rx, false);
+
+    if (command == QLatin1String("start") || command == QLatin1String("stop") ||
+        command == QLatin1String("keyer") || command == QLatin1String("app_focus") ||
+        command == QLatin1String("set_in_focus"))
+        return command + QStringLiteral(";");
+    if (command == QLatin1String("vfo"))
+        return QStringLiteral("vfo:%1,%2,%3;").arg(rx).arg(vfo).arg(cacheFreq(vfoRead.freqFunc, vfoRead.receiver).Hz);
+    if (command == QLatin1String("modulation"))
+        return QStringLiteral("modulation:%1,%2;").arg(rx).arg(tciMode(cacheMode(vfoRead.modeFunc, vfoRead.receiver)));
+    if (command == QLatin1String("trx"))
+        return QStringLiteral("trx:%1,%2;").arg(rx).arg(cacheBool(funcTransceiverStatus, rx) ? "true" : "false");
+    if (command == QLatin1String("tune"))
+        return QStringLiteral("tune:%1,%2;").arg(rx).arg(cacheBool(funcTunerStatus, rx) ? "true" : "false");
+    if (command == QLatin1String("drive"))
+        return QStringLiteral("drive:%1,%2;").arg(rx).arg(toTciRange(funcRFPower, 0, 100, rx));
+    if (command == QLatin1String("rit_enable"))
+        return QStringLiteral("rit_enable:%1,%2;").arg(rx).arg(cacheBool(funcRitStatus, rx) ? "true" : "false");
+    if (command == QLatin1String("xit_enable"))
+        return QStringLiteral("xit_enable:%1,%2;").arg(rx).arg(cacheBool(funcXitStatus, rx) ? "true" : "false");
+    if (command == QLatin1String("split_enable"))
+        return QStringLiteral("split_enable:%1,%2;").arg(rx).arg(cacheBool(funcSplitStatus, rx) ? "true" : "false");
+    if (command == QLatin1String("rit_offset"))
+        return QStringLiteral("rit_offset:%1,%2;").arg(rx).arg(cacheInt(funcRitFreq, rx));
+    if (command == QLatin1String("xit_offset"))
+        return QStringLiteral("xit_offset:%1,%2;").arg(rx).arg(cacheInt(funcXitFreq, rx));
+    if (command == QLatin1String("rx_filter_band")) {
+        const int width = cacheInt(funcFilterWidth, rx, 0);
+        return QStringLiteral("rx_filter_band:%1,%2,%3;").arg(rx).arg(-width / 2).arg(width / 2);
+    }
+    if (command == QLatin1String("cw_keyer_speed") || command == QLatin1String("cw_macros_speed"))
+        return QStringLiteral("%1:%2;").arg(command).arg(cacheInt(funcKeySpeed, 0));
+    if (command == QLatin1String("volume"))
+        return QStringLiteral("volume:%1;").arg(toTciRange(funcAfGain, -60, 0, 0));
+    if (command == QLatin1String("mute"))
+        return QStringLiteral("mute:%1;").arg(cacheBool(funcAFMute, 0) ? "true" : "false");
+    if (command == QLatin1String("rx_mute"))
+        return QStringLiteral("rx_mute:%1,%2;").arg(rx).arg(cacheBool(funcAFMute, rx) ? "true" : "false");
+    if (command == QLatin1String("rx_volume"))
+        return QStringLiteral("rx_volume:%1,%2,%3;").arg(rx).arg(vfo).arg(toTciRange(funcAfGain, -60, 0, rx));
+    if (command == QLatin1String("mon_volume"))
+        return QStringLiteral("mon_volume:%1;").arg(toTciRange(funcMonitorGain, -60, 0, 0));
+    if (command == QLatin1String("mon_enable"))
+        return QStringLiteral("mon_enable:%1;").arg(cacheBool(funcMonitor, 0) ? "true" : "false");
+    if (command == QLatin1String("rx_nb_enable"))
+        return QStringLiteral("rx_nb_enable:%1,%2;").arg(rx).arg(cacheBool(funcNoiseBlanker, rx) ? "true" : "false");
+    if (command == QLatin1String("rx_nr_enable"))
+        return QStringLiteral("rx_nr_enable:%1,%2;").arg(rx).arg(cacheBool(funcNoiseReduction, rx) ? "true" : "false");
+    if (command == QLatin1String("rx_anf_enable"))
+        return QStringLiteral("rx_anf_enable:%1,%2;").arg(rx).arg(cacheBool(funcAutoNotch, rx) ? "true" : "false");
+    if (command == QLatin1String("rx_apf_enable"))
+        return QStringLiteral("rx_apf_enable:%1,%2;").arg(rx).arg(cacheBool(funcAudioPeakFilter, rx) ? "true" : "false");
+    if (command == QLatin1String("rx_nf_enable"))
+        return QStringLiteral("rx_nf_enable:%1,%2;").arg(rx).arg(cacheBool(funcManualNotch, rx) ? "true" : "false");
+    if (command == QLatin1String("lock"))
+        return QStringLiteral("lock:%1,%2;").arg(rx).arg(cacheBool(funcDialLock, rx) ? "true" : "false");
+    if (command == QLatin1String("vfo_lock"))
+        return QStringLiteral("vfo_lock:%1,%2,%3;").arg(rx).arg(vfo).arg(cacheBool(funcDialLock, rx) ? "true" : "false");
+    if (command == QLatin1String("sql_enable"))
+        return QStringLiteral("sql_enable:%1,%2;").arg(rx).arg(cacheBool(funcSMeterSqlStatus, rx) ? "true" : "false");
+    if (command == QLatin1String("sql_level"))
+        return QStringLiteral("sql_level:%1,%2;").arg(rx).arg(toTciRange(funcSquelch, -140, 0, rx));
+    if (command == QLatin1String("audio_start") || command == QLatin1String("audio_stop") ||
+        command == QLatin1String("iq_start") || command == QLatin1String("iq_stop") ||
+        command == QLatin1String("line_out_start") || command == QLatin1String("line_out_stop") ||
+        command == QLatin1String("audio_samplerate") || command == QLatin1String("iq_samplerate") ||
+        command == QLatin1String("audio_stream_sample_type") || command == QLatin1String("audio_stream_channels") ||
+        command == QLatin1String("audio_stream_samples") || command == QLatin1String("tx_stream_audio_buffering") ||
+        command == QLatin1String("rx_sensors_enable") || command == QLatin1String("tx_sensors_enable"))
+        return command + (args.isEmpty() ? QStringLiteral(";") : QStringLiteral(":") + args.join(',') + QStringLiteral(";"));
+
+    return {};
 }
 
 void tciServer::processIncomingBinaryMessage(QByteArray message)
@@ -609,12 +824,12 @@ void tciServer::receiveCache(cacheItem item)
 }
 
 
-QString tciServer::tciMode(modeInfo m)
+QString tciServer::tciMode(modeInfo m) const
 {
     QString ret="";
     if (m.mk == modeUSB && m.data && m.data != 0xff)
         ret="digu";
-    else if (m.mk == modeLSB && m.data != 0xff)
+    else if (m.mk == modeLSB && m.data && m.data != 0xff)
         ret="digl";
     else if (m.mk == modeFM)
         ret="nfm";
@@ -623,32 +838,48 @@ QString tciServer::tciMode(modeInfo m)
     return ret;
 }
 
-modeInfo tciServer::rigMode(QString mode)
+modeInfo tciServer::rigMode(const QString &mode, funcs modeFunc, uchar receiver) const
 {
-    modeInfo m;
-    m.mk=modeUnknown;
-    qInfo() << "Searching for mode" << mode;
-    for (modeInfo &mi: rigCaps->modes)
-    {
-        if (mode.toLower() =="digl" && mi.mk == modeLSB)
-        {
-            m = modeInfo(mi);
-            m.data = true;
+    modeInfo requested;
+    const modeInfo current = cacheMode(modeFunc, receiver);
+    const QString requestedMode = mode.toLower();
+    const bool hasDataModes = rigCaps->commands.contains(funcDataModeWithFilter) ||
+                              rigCaps->commands.contains(funcDataMode);
+
+    for (const modeInfo &candidate: rigCaps->modes) {
+        if (requestedMode == QLatin1String("digl") && candidate.mk == modeLSB) {
+            if (!hasDataModes)
+                return requested;
+            requested = candidate;
+            requested.data = 1;
             break;
-        }
-        else if (mode.toLower() == "digu" && mi.mk == modeUSB)
-        {
-            m = modeInfo(mi);
-            m.data = true;
+        } else if (requestedMode == QLatin1String("digu") && candidate.mk == modeUSB) {
+            if (!hasDataModes)
+                return requested;
+            requested = candidate;
+            requested.data = 1;
             break;
-        } else if ((mode.toLower() == "nfm" && mi.mk == modeFM) || (mode.toLower() == mi.name.toLower()))
-        {
-            m = modeInfo(mi);
-            m.data = false;
+        } else if ((requestedMode == QLatin1String("nfm") && candidate.mk == modeFM) ||
+                   requestedMode == candidate.name.toLower()) {
+            requested = candidate;
+            requested.data = 0;
             break;
         }
     }
-    m.filter = 1;
-    qInfo(logTCIServer()) << "Got Mode:" << m.name << "data:" << m.data;
-    return m;
+
+    if (requested.mk == modeUnknown)
+        return requested;
+
+    if (current.mk == requested.mk && current.data != 0xff)
+        requested.data = requested.data ? 1 : 0;
+
+    if (current.filter != 0xff)
+        requested.filter = current.filter;
+    else if (requested.filter == 0xff)
+        requested.filter = 1;
+
+    qDebug(logTCIServer()) << "TCI mode request" << mode << "->" << requested.name
+                           << "data" << requested.data << "filter" << requested.filter
+                           << "receiver" << receiver;
+    return requested;
 }

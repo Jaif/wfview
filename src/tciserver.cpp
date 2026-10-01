@@ -120,7 +120,7 @@ void tciServer::init(quint16 port) {
     connect(queue,SIGNAL(cacheUpdated(cacheItem)),this,SLOT(receiveCache(cacheItem)));
 
     // Setup txChrono packet.
-    txChrono.resize(iqHeaderSize);
+    txChrono.fill(0, iqHeaderSize);
     dataStream *pStream = reinterpret_cast<dataStream*>(txChrono.data());
     pStream->receiver = 0;
     pStream->sampleRate = 48000;
@@ -129,6 +129,7 @@ void tciServer::init(quint16 port) {
     pStream->type = TxChrono;
     pStream->crc = 0u;
     pStream->length = TCI_AUDIO_LENGTH;
+    pStream->channels = 1u;
 
 }
 
@@ -687,7 +688,19 @@ void tciServer::receiveTCIAudio(audioPacket audio){
 
     //dataStream *pStream = reinterpret_cast<dataStream*>(audio.data());
 
+    bool haveRxAudioClient = false;
+    for (auto it = clients.cbegin(); it != clients.cend(); ++it) {
+        if (it.value().connected && it.value().rxaudio) {
+            haveRxAudioClient = true;
+            break;
+        }
+    }
+
+    if (!haveRxAudioClient)
+        return;
+
     rxAudioData.resize(iqHeaderSize + audio.data.size());
+    memset(rxAudioData.data(), 0, iqHeaderSize);
     dataStream *pStream = reinterpret_cast<dataStream*>(rxAudioData.data());
     pStream->receiver = 0;
     pStream->sampleRate = 48000;
@@ -696,6 +709,7 @@ void tciServer::receiveTCIAudio(audioPacket audio){
     pStream->type = RxAudioStream;
     pStream->crc = 0u;
     pStream->length = quint32(audio.data.size() / sizeof (float));
+    pStream->channels = 1u;
 
     memcpy(pStream->data,audio.data.data(),audio.data.size());
 

@@ -62,7 +62,8 @@ class tciServer : public QObject
         quint32 crc;
         quint32 length;
         quint32 type;
-        quint32 reserv[9];
+        quint32 channels;
+        quint32 reserv[8];
         float   data[TCI_AUDIO_LENGTH];
     }dataStream;
 
